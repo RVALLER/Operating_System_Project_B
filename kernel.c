@@ -4,19 +4,24 @@ void printString(char*);
 void printChar(char);
 void readString(char*);
 void readSector(char*, int);
+void readFile(char*, char*, int*);
+void executeProgram(char*);
+void terminate();
 void handleInterrupt21(int, int, int, int);
 
 void main() {
-	char line[80], buffer[512];
-
-	makeInterrupt21();
-	interrupt(0x21, 0, "Enter a line: ", 0, 0);
-	interrupt(0x21, 1, line, 0, 0);
-	interrupt(0x21, 0, line, 0, 0);
-	interrupt(0x21, 2, buffer, 30, 0);
-	interrupt(0x21, 0, buffer, 0, 0);
-
-	while(1);
+/*	char buffer[13312];
+	int sectorsRead;
+*/	makeInterrupt21();
+	interrupt(0x21, 4, "shell", 0, 0);
+/*	interrupt(0x21, 3, "messag", buffer, &sectorsRead);
+	if (sectorsRead > 0)
+		interrupt(0x21, 0, buffer, 0, 0);
+	else
+		interrupt(0x21, 0, "messag not found\r\n", 0, 0);
+	interrupt(0x21, 4, "tstpr1", 0, 0);
+	interrupt(0x21, 4, "tstpr2", 0, 0);
+*/	while(1);
 }
 
 void printString(char* chars) {
@@ -66,17 +71,88 @@ void readSector(char* buffer, int sector) {
 	interrupt(0x13, 0x2*256+1, buffer, 0*256+sector+1, 0*256+0x80);
 }
 
+void readFile(char* filename, char* buffer, int* sectorsRead) {
+	char dir[512];
+	int fileentry, i;
+
+	readSector(dir, 2);
+	*sectorsRead = 0;
+
+	for (fileentry = 0; fileentry < 512; fileentry += 32) {
+/*		if (filename[0] == dir[fileentry+0] &&
+			filename[1] == dir[fileentry+1] &&
+			filename[2] == dir[fileentry+2] &&
+			filename[3] == dir[fileentry+3] &&
+			filename[4] == dir[fileentry+4] &&
+			filename[5] == dir[fileentry+5]) {
+			for (i = 6; i < 32; i++) {
+				if (dir[fileentry+i] != 0) {
+					readSector(buffer, dir[fileentry+i]);
+					buffer += 512;
+					(*sectorsRead)++;
+				}
+				else return;
+			}
+		}
+*/		for (i = 0; i < 6; i++) {
+			if (filename[i] == dir[fileentry+i]) {
+				if ((filename[i] == 0 && dir[fileentry+i] == 0) || i == 5) {
+					for (i = 6; i < 32; i++) {
+						if (dir[fileentry+i] != 0) {
+							readSector(buffer, dir[fileentry+i]);
+							buffer += 512;
+							(*sectorsRead)++;
+						}
+						else return;
+					}
+				}
+			}
+			else break;
+		}
+	}
+}
+
+void executeProgram(char* name) {
+	char buffer[13312];
+	int sectorsRead, address;
+
+	readFile(name, buffer, &sectorsRead);
+
+	for (address = 0; address < 13312; address++)
+		putInMemory(0x2000, address, buffer[address]);
+
+	if (sectorsRead > 0)
+		launchProgram(0x2000);
+}
+
+void terminate() {
+	char shellname[6];
+
+	shellname[0]='s';
+	shellname[1]='h';
+	shellname[2]='e';
+	shellname[3]='l';
+	shellname[4]='l';
+	shellname[5]='\0';
+
+	executeProgram(shellname);
+
+	while(1);
+}
+
 void handleInterrupt21(int ax, int bx, int cx, int dx) {
-	if (ax == 0) {
+	if (ax == 0)
 		printString(bx);
-	}
-	else if (ax == 1) {
+	else if (ax == 1)
 		readString(bx);
-	}
-	else if (ax == 2) {
+	else if (ax == 2)
 		readSector(bx, cx);
-	}
-	else {
-		printString("ERROR: Function does not exist.");
-	}
+	else if (ax == 3)
+		readFile(bx, cx, dx);
+	else if (ax == 4)
+		executeProgram(bx);
+	else if (ax == 5)
+		terminate();
+	else
+		printString("function not found");
 }
