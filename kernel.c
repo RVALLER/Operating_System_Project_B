@@ -7,21 +7,16 @@ void readSector(char*, int);
 void readFile(char*, char*, int*);
 void executeProgram(char*);
 void terminate();
+void writeSector(char*, int);
+void deleteFile(char*);
+void writeFile(char*, char*, int);
 void handleInterrupt21(int, int, int, int);
 
 void main() {
-/*	char buffer[13312];
-	int sectorsRead;
-*/	makeInterrupt21();
+	makeInterrupt21();
+//	interrupt(0x21, 8, "this is a test message", "testmg", 3);
 	interrupt(0x21, 4, "shell", 0, 0);
-/*	interrupt(0x21, 3, "messag", buffer, &sectorsRead);
-	if (sectorsRead > 0)
-		interrupt(0x21, 0, buffer, 0, 0);
-	else
-		interrupt(0x21, 0, "messag not found\r\n", 0, 0);
-	interrupt(0x21, 4, "tstpr1", 0, 0);
-	interrupt(0x21, 4, "tstpr2", 0, 0);
-*/	while(1);
+	while(1);
 }
 
 void printString(char* chars) {
@@ -79,22 +74,7 @@ void readFile(char* filename, char* buffer, int* sectorsRead) {
 	*sectorsRead = 0;
 
 	for (fileentry = 0; fileentry < 512; fileentry += 32) {
-/*		if (filename[0] == dir[fileentry+0] &&
-			filename[1] == dir[fileentry+1] &&
-			filename[2] == dir[fileentry+2] &&
-			filename[3] == dir[fileentry+3] &&
-			filename[4] == dir[fileentry+4] &&
-			filename[5] == dir[fileentry+5]) {
-			for (i = 6; i < 32; i++) {
-				if (dir[fileentry+i] != 0) {
-					readSector(buffer, dir[fileentry+i]);
-					buffer += 512;
-					(*sectorsRead)++;
-				}
-				else return;
-			}
-		}
-*/		for (i = 0; i < 6; i++) {
+		for (i = 0; i < 6; i++) {
 			if (filename[i] == dir[fileentry+i]) {
 				if ((filename[i] == 0 && dir[fileentry+i] == 0) || i == 5) {
 					for (i = 6; i < 32; i++) {
@@ -140,6 +120,84 @@ void terminate() {
 	while(1);
 }
 
+void writeSector(char* buffer, int sector) {
+	interrupt(0x13, 0x3*256+1, buffer, 0*256+sector+1, 0*256+0x80);
+}
+
+void deleteFile(char* filename) {
+	char dir[512], map[512];
+	int fileentry, i;
+
+	readSector(dir, 2);
+	readSector(map, 1);
+
+	for (fileentry = 0; fileentry < 512; fileentry += 32) {
+		for (i = 0; i < 6; i++) {
+			if (filename[i] == dir[fileentry+i]) {
+				if ((filename[i] == 0 && dir[fileentry+i] == 0) || i == 5) {
+					dir[fileentry] = '\0';
+					for (i = 6; i < 32; i++) {
+						if (dir[fileentry+i] != 0)
+							map[dir[fileentry+i]] = 0;
+						else break;
+					}
+					writeSector(dir, 2);
+					writeSector(map, 1);
+					return;
+				}
+			}
+			else break;
+		}
+	}
+}
+
+void writeFile(char* buffer, char* filename, int numberOfSectors) {
+	char map[512], dir[512];
+	int entry, i, sector, freeentry = 0, freesector = 0;
+
+	readSector(map, 1);
+	readSector(dir, 2);
+
+	for (entry = 0; entry < 512; entry += 32) {
+		if (dir[entry] == '\0') {
+			freeentry = 1;
+			for (i = 0; i < 6; i++) {
+				if (filename[i] != 0)
+					dir[entry+i] = filename[i];
+				else
+					dir[entry+i] = '\0';
+			}
+			break;
+		}
+	}
+	if (freeentry == 0) return;
+
+	for (i = 0; i < numberOfSectors; i++) {
+		freesector = 0;
+		for (sector = 3; sector < 512; sector++) {
+			if (map[sector] == 0) {
+				freesector = 1;
+				map[sector] = 0xFF;
+				dir[entry+6+i] = sector;
+				writeSector(buffer, sector);
+				buffer += 512;
+				break;
+			}
+		}
+		if (freesector == 0) {
+			for (; i < 26; i++)
+				dir[entry+6+i] = 0;
+			return;
+		}
+	}
+
+	for (; i < 26; i++)
+		dir[entry+6+i] = 0;
+
+	writeSector(map, 1);
+	writeSector(dir, 2);
+}
+
 void handleInterrupt21(int ax, int bx, int cx, int dx) {
 	if (ax == 0)
 		printString(bx);
@@ -153,6 +211,12 @@ void handleInterrupt21(int ax, int bx, int cx, int dx) {
 		executeProgram(bx);
 	else if (ax == 5)
 		terminate();
+	else if (ax == 6)
+		writeSector(bx, cx);
+	else if (ax == 7)
+		deleteFile(bx);
+	else if (ax == 8)
+		writeFile(bx, cx, dx);
 	else
 		printString("function not found");
 }
