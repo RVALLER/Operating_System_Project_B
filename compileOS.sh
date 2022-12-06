@@ -17,9 +17,17 @@ ld86 -d -o tstpr2 tstpr2.o userlib.o
 bcc -c -ansi -o shell.o shell.c
 ld86 -d -o shell shell.o userlib.o
 
+bcc -c -ansi -o number.o number.c
+ld86 -d -o number number.o userlib.o
+
+bcc -c -ansi -o letter.o letter.c
+ld86 -d -o letter letter.o userlib.o
+
 gcc -o loadFile loadFile.c
 ./loadFile kernel
 ./loadFile message.txt
 ./loadFile tstpr1
 ./loadFile tstpr2
 ./loadFile shell
+./loadFile number
+./loadFile letter

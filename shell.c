@@ -2,8 +2,9 @@
 
 main() {
 	char line[80], buffer[13312], dir[512], textfile[13312];
-	int sectorsRead, i, fileentry, offset;
+	int sectorsRead, i, fileentry, offset, pid;
 
+	enableInterrupts();
 	while (1) {
 		syscall(0, "\r\nSHELL> ");
 		syscall(1, line);
@@ -26,12 +27,26 @@ main() {
 		else if (line[0] == 'e' &&
 				line[1] == 'x' &&
 				line[2] == 'e' &&
-				line[3] == 'c') {
-				syscall(3, line+5, buffer, &sectorsRead);
-				if (sectorsRead > 0)
-					syscall(4, line+5);
-				else
-					syscall(0, "program not found\r\n");
+				line[3] == 'c' &&
+				line[4] == '\0') {
+			syscall(3, line+5, buffer, &sectorsRead);
+			if (sectorsRead > 0)
+				syscall(4, line+5);
+			else
+				syscall(0, "program not found\r\n");
+		}
+		else if (line[0] == 'e' &&
+				line[1] == 'x' &&
+				line[2] == 'e' &&
+				line[3] == 'c' &&
+				line[4] == 'b') {
+			syscall(3, line+6, buffer, &sectorsRead);
+			if (sectorsRead > 0) {
+				syscall(11, line+6, &pid);
+				syscall(10, pid);
+			}
+			else
+				syscall(0, "program not found\r\n");
 		}
 		else if (line[0] == 'd' &&
 				line[1] == 'i' &&
@@ -89,6 +104,12 @@ main() {
 				}
 			}
 			syscall(8, textfile, line+7, 1);
+		}
+		else if (line[0] = 'k' &&
+				line[1] == 'i' &&
+				line[2] == 'l' &&
+				line[3] == 'l') {
+			syscall(9, line[5]-'0');
 		}
 		else
 			syscall(0, "Bad Command!\r\n");

@@ -6,16 +6,30 @@ void readString(char*);
 void readSector(char*, int);
 void readFile(char*, char*, int*);
 void executeProgram(char*);
+void executeProgramBlock(char*, int*);
 void terminate();
 void writeSector(char*, int);
 void deleteFile(char*);
 void writeFile(char*, char*, int);
+void killProcess(int);
+void waitOnProcess(int);
+void handleTimerInterrupt(int, int);
 void handleInterrupt21(int, int, int, int);
 
+int processActive[8], processStackPointer[8], processWaitingOn[8], currentProcess;
+
 void main() {
+	int i;
+
+	for (i = 0; i < 8; i++) {
+		processActive[i] = 0;
+		processStackPointer[i] = 0xff00;
+	}
+	currentProcess = -1;
+
 	makeInterrupt21();
-//	interrupt(0x21, 8, "this is a test message", "testmg", 3);
 	interrupt(0x21, 4, "shell", 0, 0);
+	makeTimerInterrupt();
 	while(1);
 }
 
@@ -81,7 +95,7 @@ void readFile(char* filename, char* buffer, int* sectorsRead) {
 						if (dir[fileentry+i] != 0) {
 							readSector(buffer, dir[fileentry+i]);
 							buffer += 512;
-							(*sectorsRead)++;
+							*sectorsRead=*sectorsRead+1;
 						}
 						else return;
 					}
@@ -94,29 +108,71 @@ void readFile(char* filename, char* buffer, int* sectorsRead) {
 
 void executeProgram(char* name) {
 	char buffer[13312];
-	int sectorsRead, address;
+	int sectorsRead, address, dataseg, i, segment;
 
 	readFile(name, buffer, &sectorsRead);
 
-	for (address = 0; address < 13312; address++)
-		putInMemory(0x2000, address, buffer[address]);
+	if (sectorsRead > 0) {
+		dataseg = setKernelDataSegment();
+		for (i = 0; i < 8; i++) {
+			if (processActive[i] == 0) {
+				segment = (i+2)*0x1000;
+				break;
+			}
+		}
+		restoreDataSegment(dataseg);
 
-	if (sectorsRead > 0)
-		launchProgram(0x2000);
+		for (address = 0; address < 13312; address++)
+			putInMemory(segment, address, buffer[address]);
+		initializeProgram(segment);
+
+		dataseg = setKernelDataSegment();
+		processActive[i] = 1;
+		processStackPointer[i] = 0xff00;
+		restoreDataSegment(dataseg);
+	}
+}
+
+void executeProgramBlock(char* name, int* pid) {
+	char buffer[13312];
+	int sectorsRead, address, dataseg, i, segment;
+
+	readFile(name, buffer, &sectorsRead);
+
+	if (sectorsRead > 0) {
+		dataseg = setKernelDataSegment();
+		for (i = 0; i < 8; i++) {
+			if (processActive[i] == 0) {
+				segment = (i+2)*0x1000;
+				break;
+			}
+		}
+		restoreDataSegment(dataseg);
+
+		for (address = 0; address < 13312; address++)
+			putInMemory(segment, address, buffer[address]);
+		initializeProgram(segment);
+
+		dataseg = setKernelDataSegment();
+		processActive[i] = 1;
+		processStackPointer[i] = 0xff00;
+		restoreDataSegment(dataseg);
+
+		*pid = i;
+		return;
+	}
 }
 
 void terminate() {
-	char shellname[6];
+	int dataseg, i;
 
-	shellname[0]='s';
-	shellname[1]='h';
-	shellname[2]='e';
-	shellname[3]='l';
-	shellname[4]='l';
-	shellname[5]='\0';
-
-	executeProgram(shellname);
-
+	dataseg = setKernelDataSegment();
+	processActive[currentProcess] = 0;
+	for (i = 0; i < 8; i++) {
+		if (processWaitingOn[i] == currentProcess)
+			processActive[i] = 1;
+	}
+	restoreDataSegment(dataseg);
 	while(1);
 }
 
@@ -198,6 +254,62 @@ void writeFile(char* buffer, char* filename, int numberOfSectors) {
 	writeSector(dir, 2);
 }
 
+void killProcess(int pid) {
+	int dataseg, i;
+
+	dataseg = setKernelDataSegment();
+	processActive[pid] = 0;
+	for (i = 0; i < 8; i++) {
+		if (processWaitingOn[i] == pid)
+			processActive[i] = 1;
+	}
+	restoreDataSegment(dataseg);
+}
+
+void waitOnProcess(int pid) {
+	int dataseg = setKernelDataSegment();
+	processActive[currentProcess] = 2;
+	processWaitingOn[currentProcess] = pid;
+	while(processActive[currentProcess] == 2);
+	restoreDataSegment(dataseg);
+}
+
+void handleTimerInterrupt(int segment, int sp) {
+/*	printChar('T');
+	printChar('i');
+	printChar('c');
+*/
+	int dataseg, i;
+
+	dataseg = setKernelDataSegment();
+	for(i=0; i<8; i++)
+        {
+                putInMemory(0xb800,60*2+i*4,i+0x30);
+                if(processActive[i]==1)
+                        putInMemory(0xb800,60*2+i*4+1,0x20);
+		else if(processActive[i]==2)
+                        putInMemory(0xb800,60*2+i*4+1,0x40);
+                else
+                        putInMemory(0xb800,60*2+i*4+1,0);
+        }
+
+	if (currentProcess != -1)
+		processStackPointer[currentProcess] = sp;
+
+	while (1) {
+		currentProcess += 1;
+		if (currentProcess == 8)
+			currentProcess = 0;
+		if (processActive[currentProcess] == 1) break;
+	}
+
+	segment = (currentProcess+2)*0x01000;
+	sp = processStackPointer[currentProcess];
+	restoreDataSegment(dataseg);
+
+	returnFromTimer(segment, sp);
+}
+
 void handleInterrupt21(int ax, int bx, int cx, int dx) {
 	if (ax == 0)
 		printString(bx);
@@ -217,6 +329,12 @@ void handleInterrupt21(int ax, int bx, int cx, int dx) {
 		deleteFile(bx);
 	else if (ax == 8)
 		writeFile(bx, cx, dx);
+	else if (ax == 9)
+		killProcess(bx);
+	else if (ax == 10)
+		waitOnProcess(bx);
+	else if (ax == 11)
+		executeProgramBlock(bx, cx);
 	else
 		printString("function not found");
 }
